@@ -43,10 +43,10 @@ need_cmd curl
 mkdir -p "$INSTALL_DIR" "$DATA_DIR"
 
 echo "Downloading server..."
-download "${BASE_URL}/bin/FluxChat.Server" "$SERVER_BIN"
+download "${BASE_URL}/dist-server-linux/FluxChat.Server" "$SERVER_BIN"
 
 echo "Downloading fluxus admin CLI..."
-download "${BASE_URL}/bin/fluxus" "$FLUXUS_BIN"
+download "${BASE_URL}/dist-server-linux/fluxus" "$FLUXUS_BIN"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -66,6 +66,7 @@ EOF
 
 if command -v ufw >/dev/null 2>&1; then
   ufw allow "${PORT}/tcp" || true
+  ufw allow "${PORT}/udp" || true
 fi
 
 systemctl daemon-reload
