@@ -7,7 +7,8 @@ It installs:
 - `FluxChat.Server` - the relay server on TCP `42800`;
 - `fluxus` - the server admin menu for invites, users, bans, tokens, and offline queues;
 - a `systemd` service named `fluxchat`;
-- persistent server data in `/var/lib/fluxchat`.
+- persistent server data in `/var/lib/fluxchat`;
+- media relay support for call audio and screen share frames on port `42800`.
 
 ## Quick Install / Update
 
@@ -76,10 +77,11 @@ sudo rm -f /usr/local/bin/fluxus
 sudo rm -rf /var/lib/fluxchat
 sudo systemctl daemon-reload
 sudo ufw delete allow 42800/tcp
+sudo ufw delete allow 42800/udp
 ```
 
 ## Notes
 
 - The repository must be public for the `curl` installer command to work.
 - The installer is designed for Ubuntu VPS servers.
-- The relay server does not require inbound ports on client PCs. Only the VPS needs TCP `42800` open.
+- The relay server does not require inbound ports on client PCs. Only the VPS needs TCP and UDP `42800` open.
