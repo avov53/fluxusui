@@ -18,7 +18,7 @@ ACME_ROOT="/var/www/fluxchat-acme"
 API_PORT="42801"
 RELAY_PORT="42800"
 SETUP_MARKER="${ETC_DIR}/account-setup-version"
-SCRIPT_VERSION="1"
+SCRIPT_VERSION="2"
 
 mode="${1:-setup}"
 
@@ -153,6 +153,7 @@ obtain_certificate() {
 write_https_site() {
     local domain="$1"
     local https_port="$2"
+    rm -f "$NGINX_FORCE_CONF"
     cat > "$NGINX_AVAILABLE" <<EOF
 server {
     listen 80;
@@ -178,6 +179,14 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
     client_max_body_size 128m;
 
+    location = /health {
+        proxy_pass http://127.0.0.1:${API_PORT}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host 127.0.0.1;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
@@ -190,7 +199,7 @@ server {
 EOF
     ln -sfn "$NGINX_AVAILABLE" "$NGINX_ENABLED"
     nginx -t
-    systemctl reload nginx
+    systemctl restart nginx
 }
 
 write_forced_https_site() {
@@ -223,6 +232,14 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
     client_max_body_size 128m;
 
+    location = /health {
+        proxy_pass http://127.0.0.1:${API_PORT}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host 127.0.0.1;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
@@ -234,7 +251,42 @@ server {
 }
 EOF
     nginx -t
-    systemctl reload nginx
+    systemctl restart nginx
+}
+
+update_public_account_url() {
+    local public_url="$1"
+    if grep -q '^FLUXCHAT_PUBLIC_ACCOUNT_URL=' "$ACCOUNT_ENV"; then
+        sed -i "s#^FLUXCHAT_PUBLIC_ACCOUNT_URL=.*#FLUXCHAT_PUBLIC_ACCOUNT_URL=${public_url}#" "$ACCOUNT_ENV"
+    else
+        printf 'FLUXCHAT_PUBLIC_ACCOUNT_URL=%s\n' "$public_url" >> "$ACCOUNT_ENV"
+    fi
+    chmod 600 "$ACCOUNT_ENV"
+}
+
+move_account_endpoint_to_free_port() {
+    local domain="$1"
+    local old_port="$2"
+    local new_port
+    new_port="$(choose_https_port "")"
+    [ "$new_port" != "$old_port" ] || return 1
+
+    warn "Port ${old_port} is answering with the wrong nginx site. Moving the Account API to free port ${new_port}."
+    write_https_site "$domain" "$new_port"
+    configure_firewall "$new_port"
+    update_public_account_url "https://${domain}:${new_port}/"
+    systemctl restart fluxchat
+
+    if wait_for_public_health "https://${domain}:${new_port}/"; then
+        say "Public HTTPS health recovered on port ${new_port}."
+        say "The relay now advertises https://${domain}:${new_port}/ to clients."
+        return 0
+    fi
+
+    local replacement_code
+    replacement_code="$(public_health_code "https://${domain}:${new_port}/")"
+    warn "The replacement endpoint on port ${new_port} returned HTTP ${replacement_code}."
+    return 1
 }
 
 ensure_postgres() {
@@ -303,6 +355,18 @@ public_health_code() {
     curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/health" 2>/dev/null || printf '000'
 }
 
+wait_for_public_health() {
+    local url="$1"
+    local attempt
+    for attempt in $(seq 1 8); do
+        if public_health "$url"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 repair_public_https() {
     local domain="$1"
     local https_port="$2"
@@ -332,6 +396,10 @@ repair_public_https() {
     fi
 
     code="$(public_health_code "$public_url")"
+    if [ "$code" = "404" ] && move_account_endpoint_to_free_port "$domain" "$https_port"; then
+        return
+    fi
+
     warn "Nginx listeners on ${https_port}:"
     nginx -T 2>/dev/null | grep -n "listen ${https_port}\|listen \[::\]:${https_port}\|server_name\|proxy_pass" >&2 || true
     fail "The public HTTPS health check still fails with HTTP ${code}. Check external firewall/provider port rules for ${https_port}/tcp."
@@ -444,7 +512,9 @@ setup_accounts() {
         fail "The local Account API did not become healthy. The service log above shows the exact reason."
     fi
     public_health "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
-    say "Account service is ready: https://${domain}:${https_port}/"
+    local ready_url
+    ready_url="$(env_value FLUXCHAT_PUBLIC_ACCOUNT_URL)"
+    say "Account service is ready: ${ready_url:-https://${domain}:${https_port}/}"
     say "Client users only enter ${public_ip}:${RELAY_PORT} and their invite code."
 }
 
