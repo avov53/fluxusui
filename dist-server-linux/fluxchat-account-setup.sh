@@ -356,6 +356,21 @@ local_routes() {
     [ "$code" = "405" ]
 }
 
+local_ready() {
+    local_health && local_routes
+}
+
+wait_for_local_ready() {
+    local attempt
+    for attempt in $(seq 1 30); do
+        if local_ready; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 public_routes() {
     local url="$1"
     local code
@@ -398,7 +413,7 @@ repair_public_https() {
     code="$(public_health_code "$public_url")"
     warn "Public HTTPS endpoint failed. Health HTTP ${code}, register route HTTP $(public_route_code "$public_url"). Running automatic diagnostics and repair."
 
-    if ! local_health || ! local_routes; then
+    if ! local_ready; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
         fail "Local Account API is not healthy, so nginx cannot proxy it."
     fi
@@ -532,10 +547,9 @@ setup_accounts() {
     systemctl restart fluxchat
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
 
-    sleep 1
-    if ! local_health || ! local_routes; then
+    if ! wait_for_local_ready; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
-        fail "The local Account API did not become healthy. The service log above shows the exact reason."
+        fail "The local Account API did not become ready within 30 seconds. The service log above shows the exact reason."
     fi
     public_ready "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
     local ready_url
