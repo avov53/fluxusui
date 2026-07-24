@@ -10,6 +10,7 @@ DATA_DIR="/var/lib/fluxchat"
 SERVICE_FILE="/etc/systemd/system/fluxchat.service"
 SERVER_BIN="${INSTALL_DIR}/FluxChat.Server"
 FLUXUS_BIN="/usr/local/bin/fluxus"
+ACCOUNT_SETUP_SCRIPT="${INSTALL_DIR}/fluxchat-account-setup.sh"
 PORT="42800"
 ETC_DIR="/etc/fluxchat"
 TURN_SECRET_FILE="${ETC_DIR}/turn-secret"
@@ -75,6 +76,9 @@ download "${BASE_URL}/dist-server-linux/FluxChat.Server" "$SERVER_BIN"
 
 echo "Downloading fluxus admin CLI..."
 download "${BASE_URL}/dist-server-linux/fluxus" "$FLUXUS_BIN"
+
+echo "Downloading account setup wizard..."
+download "${BASE_URL}/dist-server-linux/fluxchat-account-setup.sh" "$ACCOUNT_SETUP_SCRIPT"
 
 echo "Configuring TURN relay..."
 cat > /etc/turnserver.conf <<EOF
@@ -144,3 +148,21 @@ echo "TURN status: systemctl status coturn"
 echo
 echo "Create an invite code:"
 echo "  fluxus"
+
+echo
+if "$ACCOUNT_SETUP_SCRIPT" status >/dev/null 2>&1; then
+  echo "Account service: already configured and healthy."
+elif [ -t 0 ]; then
+  echo "Account service is not configured yet."
+  read -r -p "Set up protected registration, PostgreSQL, HTTPS and SMTP now? [Y/n] " SETUP_ACCOUNTS
+  case "${SETUP_ACCOUNTS:-Y}" in
+    Y|y|Yes|yes)
+      "$ACCOUNT_SETUP_SCRIPT" setup
+      ;;
+    *)
+      echo "Skipped. Run 'fluxus setup accounts' whenever you are ready."
+      ;;
+  esac
+else
+  echo "Account service is not configured. Run 'fluxus setup accounts' interactively when ready."
+fi

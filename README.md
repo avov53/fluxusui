@@ -6,6 +6,7 @@ It installs:
 
 - `FluxChat.Server` - the relay server on TCP `42800`;
 - `fluxus` - the server admin menu for invites, users, bans, tokens, and offline queues;
+- automatic account-service setup for PostgreSQL, HTTPS, nginx and SMTP;
 - a `systemd` service named `fluxchat`;
 - persistent server data in `/var/lib/fluxchat`;
 - media relay support for call audio and screen share frames on port `42800`.
@@ -18,7 +19,7 @@ Run this on your Ubuntu VPS as `root`:
 bash <(curl -Ls https://raw.githubusercontent.com/avov53/fluxusui/main/install.sh)
 ```
 
-The same command is used for updates. It replaces only the server binaries and service file.
+The same command is used for updates. It replaces server binaries and the account setup wizard while keeping server data and account settings.
 
 It does **not** delete:
 
@@ -28,6 +29,28 @@ It does **not** delete:
 - saved tokens
 - bans
 - offline pending messages
+
+## Account Registration Setup
+
+On a new or incomplete server setup, the installer offers to configure accounts automatically. It checks the VPS, asks whether to use an automatic `sslip.io` address or your domain, configures PostgreSQL, nginx, HTTPS and SMTP, and verifies the public Account API.
+
+The relay remains on `YOUR_VPS_IP:42800`. Users do not enter an HTTPS address in FluxChat: the relay provides it automatically after the invite connection.
+
+Run the wizard again at any time:
+
+```bash
+fluxus setup accounts
+```
+
+Useful commands:
+
+```bash
+fluxus setup accounts status
+fluxus setup accounts repair
+fluxus setup accounts disable
+```
+
+The setup uses a free HTTPS port from `8443-8499`, leaves port `443` untouched for 3x-ui/VLESS, and creates a separate nginx site. Port `80/tcp` must be reachable while Let's Encrypt issues or renews the certificate.
 
 ## Create Invite Codes
 
