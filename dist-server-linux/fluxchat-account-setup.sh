@@ -199,7 +199,7 @@ server {
     location = /api/v1/accounts/health {
         proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/health;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -208,7 +208,7 @@ server {
     location = /api/v1/accounts/register {
         proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/register;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -217,7 +217,7 @@ server {
     location ^~ /api/v1/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -226,7 +226,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -280,7 +280,7 @@ server {
     location = /api/v1/accounts/health {
         proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/health;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -289,7 +289,7 @@ server {
     location = /api/v1/accounts/register {
         proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/register;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -298,7 +298,7 @@ server {
     location ^~ /api/v1/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -307,7 +307,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
