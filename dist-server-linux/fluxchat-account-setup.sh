@@ -207,13 +207,6 @@ write_account_env() {
     local data_key="$2"
     local federation_key="$3"
     local public_url="$4"
-    local smtp_host="$5"
-    local smtp_port="$6"
-    local smtp_tls="$7"
-    local smtp_user="$8"
-    local smtp_password="$9"
-    local smtp_from="${10}"
-    local smtp_name="${11}"
 
     mkdir -p "$ETC_DIR"
     umask 077
@@ -225,13 +218,6 @@ FLUXCHAT_PUBLIC_ACCOUNT_URL=${public_url}
 FLUXCHAT_RETENTION_DAYS=730
 FLUXCHAT_FEDERATION_SERVER_ID=$(hostname -s)
 FLUXCHAT_FEDERATION_KEY=${federation_key}
-FLUXCHAT_SMTP_HOST=${smtp_host}
-FLUXCHAT_SMTP_PORT=${smtp_port}
-FLUXCHAT_SMTP_TLS=${smtp_tls}
-FLUXCHAT_SMTP_USERNAME=${smtp_user}
-FLUXCHAT_SMTP_PASSWORD=${smtp_password}
-FLUXCHAT_SMTP_FROM=${smtp_from}
-FLUXCHAT_SMTP_FROM_NAME=${smtp_name}
 EOF
     chmod 600 "$ACCOUNT_ENV"
 }
@@ -251,49 +237,6 @@ configure_firewall() {
         ufw allow 80/tcp || true
         ufw allow "${https_port}/tcp" || true
     fi
-}
-
-test_smtp() {
-    local host="$1"
-    local port="$2"
-    local tls="$3"
-    local user="$4"
-    local password="$5"
-    local sender="$6"
-    local recipient="$7"
-    [ -n "$recipient" ] || return 0
-
-    say "Sending a test email to ${recipient}..."
-    SMTP_HOST="$host" SMTP_PORT="$port" SMTP_TLS="$tls" SMTP_USER="$user" \
-        SMTP_PASSWORD="$password" SMTP_FROM="$sender" SMTP_TO="$recipient" python3 - <<'PY'
-import os
-import smtplib
-from email.message import EmailMessage
-
-host = os.environ["SMTP_HOST"]
-port = int(os.environ["SMTP_PORT"])
-use_tls = os.environ["SMTP_TLS"].lower() == "true"
-username = os.environ["SMTP_USER"]
-password = os.environ["SMTP_PASSWORD"]
-sender = os.environ["SMTP_FROM"]
-recipient = os.environ["SMTP_TO"]
-
-message = EmailMessage()
-message["Subject"] = "FluxChat account service test"
-message["From"] = sender
-message["To"] = recipient
-message.set_content("FluxChat SMTP setup is working.")
-
-server = smtplib.SMTP(host, port, timeout=20)
-if use_tls:
-    server.starttls()
-try:
-    if username:
-        server.login(username, password)
-    server.send_message(message)
-finally:
-    server.quit()
-PY
 }
 
 local_health() {
@@ -358,7 +301,7 @@ setup_accounts() {
     [ -n "$public_ip" ] || fail "Could not detect the public VPS IP."
     say "Public VPS IP: ${public_ip}"
 
-    local existing_url existing_domain existing_port default_domain choice domain admin_email existing_smtp_from
+    local existing_url existing_domain existing_port default_domain choice domain admin_email
     existing_url="$(env_value FLUXCHAT_PUBLIC_ACCOUNT_URL)"
     existing_domain="$(printf '%s' "$existing_url" | sed -E 's#https?://([^:/]+).*#\1#')"
     existing_port="$(printf '%s' "$existing_url" | sed -nE 's#https?://[^:]+:([0-9]+).*#\1#p')"
@@ -376,8 +319,7 @@ setup_accounts() {
     [ -n "$domain" ] || fail "A domain name is required."
     verify_domain "$domain" "$public_ip"
 
-    existing_smtp_from="$(env_value FLUXCHAT_SMTP_FROM)"
-    admin_email="$(prompt_value "Email for Let's Encrypt renewal notices" "$existing_smtp_from")"
+    admin_email="$(prompt_value "Email for Let's Encrypt renewal notices" "")"
     [[ "$admin_email" == *@* ]] || fail "Enter a valid email address."
 
     local https_port
@@ -396,37 +338,13 @@ setup_accounts() {
     federation_key="${federation_key:-$(openssl rand -base64 48)}"
     ensure_postgres "$db_password"
 
-    local smtp_host smtp_port smtp_tls smtp_user smtp_password smtp_from smtp_name smtp_test_to
-    local saved_smtp_host saved_smtp_port saved_smtp_tls saved_smtp_user saved_smtp_password saved_smtp_from saved_smtp_name
-    saved_smtp_host="$(env_value FLUXCHAT_SMTP_HOST)"
-    saved_smtp_port="$(env_value FLUXCHAT_SMTP_PORT)"
-    saved_smtp_tls="$(env_value FLUXCHAT_SMTP_TLS)"
-    saved_smtp_user="$(env_value FLUXCHAT_SMTP_USERNAME)"
-    saved_smtp_password="$(env_value FLUXCHAT_SMTP_PASSWORD)"
-    saved_smtp_from="$(env_value FLUXCHAT_SMTP_FROM)"
-    saved_smtp_name="$(env_value FLUXCHAT_SMTP_FROM_NAME)"
-    smtp_host="$(prompt_value 'SMTP host' "$saved_smtp_host")"
-    smtp_port="$(prompt_value 'SMTP port' "$saved_smtp_port")"
-    smtp_tls="$(prompt_value 'Use STARTTLS true or false' "$saved_smtp_tls")"
-    smtp_user="$(prompt_value 'SMTP username' "$saved_smtp_user")"
-    smtp_password="$(prompt_secret 'SMTP app password (leave empty to keep existing)')"
-    smtp_password="${smtp_password:-$saved_smtp_password}"
-    smtp_from="$(prompt_value 'Sender email' "$saved_smtp_from")"
-    smtp_name="$(prompt_value 'Sender name' "$saved_smtp_name")"
-    smtp_test_to="$(prompt_value 'Test recipient email' "$admin_email")"
-
-    [ -n "$smtp_host" ] && [ -n "$smtp_port" ] && [ -n "$smtp_from" ] || fail "SMTP host, port and sender email are required."
-    case "${smtp_tls,,}" in true|false) ;; *) fail "Use true or false for STARTTLS." ;; esac
-    test_smtp "$smtp_host" "$smtp_port" "$smtp_tls" "$smtp_user" "$smtp_password" "$smtp_from" "$smtp_test_to"
-
     write_http_challenge_site "$domain"
     obtain_certificate "$domain" "$admin_email"
     write_https_site "$domain" "$https_port"
     configure_firewall "$https_port"
 
     write_account_env "$db_password" "$data_key" "$federation_key" \
-        "https://${domain}:${https_port}/" "$smtp_host" "$smtp_port" "$smtp_tls" \
-        "$smtp_user" "$smtp_password" "$smtp_from" "$smtp_name"
+        "https://${domain}:${https_port}/"
     write_systemd_dropin
     systemctl restart fluxchat
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"

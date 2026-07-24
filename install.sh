@@ -154,7 +154,7 @@ if "$ACCOUNT_SETUP_SCRIPT" status >/dev/null 2>&1; then
   echo "Account service: already configured and healthy."
 elif [ -t 0 ]; then
   echo "Account service is not configured yet."
-  read -r -p "Set up protected registration, PostgreSQL, HTTPS and SMTP now? [Y/n] " SETUP_ACCOUNTS
+  read -r -p "Set up protected registration, PostgreSQL and HTTPS now? [Y/n] " SETUP_ACCOUNTS
   case "${SETUP_ACCOUNTS:-Y}" in
     Y|y|Yes|yes)
       "$ACCOUNT_SETUP_SCRIPT" setup

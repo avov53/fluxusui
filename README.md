@@ -6,7 +6,7 @@ It installs:
 
 - `FluxChat.Server` - the relay server on TCP `42800`;
 - `fluxus` - the server admin menu for invites, users, bans, tokens, and offline queues;
-- automatic account-service setup for PostgreSQL, HTTPS, nginx and SMTP;
+- automatic account-service setup for PostgreSQL, HTTPS and nginx;
 - a `systemd` service named `fluxchat`;
 - persistent server data in `/var/lib/fluxchat`;
 - media relay support for call audio and screen share frames on port `42800`.
@@ -32,7 +32,7 @@ It does **not** delete:
 
 ## Account Registration Setup
 
-On a new or incomplete server setup, the installer offers to configure accounts automatically. It checks the VPS, asks whether to use an automatic `sslip.io` address or your domain, configures PostgreSQL, nginx, HTTPS and SMTP, and verifies the public Account API.
+On a new or incomplete server setup, the installer offers to configure accounts automatically. It checks the VPS, asks whether to use an automatic `sslip.io` address or your domain, configures PostgreSQL, nginx and HTTPS, and verifies the public Account API.
 
 The relay remains on `YOUR_VPS_IP:42800`. Users do not enter an HTTPS address in FluxChat: the relay provides it automatically after the invite connection.
 
