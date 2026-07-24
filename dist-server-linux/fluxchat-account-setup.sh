@@ -196,9 +196,13 @@ ensure_postgres() {
     systemctl enable --now postgresql
     if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'fluxchat'" | grep -q 1; then
         runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE ROLE fluxchat LOGIN PASSWORD '${db_password}';"
+    else
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "ALTER ROLE fluxchat WITH LOGIN PASSWORD '${db_password}';"
     fi
     if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'fluxchat'" | grep -q 1; then
         runuser -u postgres -- createdb --owner=fluxchat fluxchat
+    else
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE fluxchat OWNER TO fluxchat;"
     fi
 }
 
@@ -350,7 +354,10 @@ setup_accounts() {
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
 
     sleep 1
-    local_health || fail "The local Account API did not become healthy. Run: journalctl -u fluxchat -n 100 --no-pager"
+    if ! local_health; then
+        journalctl -u fluxchat -n 80 --no-pager >&2 || true
+        fail "The local Account API did not become healthy. The service log above shows the exact reason."
+    fi
     public_health "https://${domain}:${https_port}/" || fail "The public HTTPS health check failed. Verify firewall/DNS and run: fluxus setup accounts repair"
     say "Account service is ready: https://${domain}:${https_port}/"
     say "Client users only enter ${public_ip}:${RELAY_PORT} and their invite code."
