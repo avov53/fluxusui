@@ -13,6 +13,7 @@ SERVICE_DROPIN_DIR="/etc/systemd/system/fluxchat.service.d"
 SERVICE_DROPIN="${SERVICE_DROPIN_DIR}/account.conf"
 NGINX_AVAILABLE="/etc/nginx/sites-available/fluxchat-account"
 NGINX_ENABLED="/etc/nginx/sites-enabled/fluxchat-account"
+NGINX_FORCE_CONF="/etc/nginx/conf.d/00-fluxchat-account.conf"
 ACME_ROOT="/var/www/fluxchat-acme"
 API_PORT="42801"
 RELAY_PORT="42800"
@@ -115,6 +116,7 @@ verify_domain() {
 write_http_challenge_site() {
     local domain="$1"
     mkdir -p "$ACME_ROOT"
+    rm -f "$NGINX_FORCE_CONF"
     cat > "$NGINX_AVAILABLE" <<EOF
 server {
     listen 80;
@@ -191,6 +193,50 @@ EOF
     systemctl reload nginx
 }
 
+write_forced_https_site() {
+    local domain="$1"
+    local https_port="$2"
+    rm -f "$NGINX_ENABLED"
+    mkdir -p "$(dirname "$NGINX_FORCE_CONF")"
+    cat > "$NGINX_FORCE_CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root ${ACME_ROOT};
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://\$host:${https_port}\$request_uri;
+    }
+}
+
+server {
+    listen ${https_port} ssl http2 default_server;
+    listen [::]:${https_port} ssl http2 default_server;
+    server_name ${domain} _;
+
+    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    client_max_body_size 128m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+    nginx -t
+    systemctl reload nginx
+}
+
 ensure_postgres() {
     local db_password="$1"
     systemctl enable --now postgresql
@@ -250,6 +296,45 @@ local_health() {
 public_health() {
     local url="$1"
     curl -fsS --max-time 10 "${url%/}/health" | grep -q '"'
+}
+
+public_health_code() {
+    local url="$1"
+    curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/health" 2>/dev/null || printf '000'
+}
+
+repair_public_https() {
+    local domain="$1"
+    local https_port="$2"
+    local public_url="https://${domain}:${https_port}/"
+    local code
+    code="$(public_health_code "$public_url")"
+    warn "Public HTTPS health failed with HTTP ${code}. Running automatic diagnostics and repair."
+
+    if ! local_health; then
+        journalctl -u fluxchat -n 80 --no-pager >&2 || true
+        fail "Local Account API is not healthy, so nginx cannot proxy it."
+    fi
+
+    say "Local Account API is healthy. Rewriting nginx account endpoint."
+    write_https_site "$domain" "$https_port" || true
+    if public_health "$public_url"; then
+        say "Public HTTPS health recovered after rewriting the normal nginx site."
+        return
+    fi
+
+    code="$(public_health_code "$public_url")"
+    warn "Normal nginx site still returns HTTP ${code}. Applying forced conf.d endpoint."
+    write_forced_https_site "$domain" "$https_port"
+    if public_health "$public_url"; then
+        say "Public HTTPS health recovered with forced nginx endpoint."
+        return
+    fi
+
+    code="$(public_health_code "$public_url")"
+    warn "Nginx listeners on ${https_port}:"
+    nginx -T 2>/dev/null | grep -n "listen ${https_port}\|listen \[::\]:${https_port}\|server_name\|proxy_pass" >&2 || true
+    fail "The public HTTPS health check still fails with HTTP ${code}. Check external firewall/provider port rules for ${https_port}/tcp."
 }
 
 status() {
@@ -358,7 +443,7 @@ setup_accounts() {
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
         fail "The local Account API did not become healthy. The service log above shows the exact reason."
     fi
-    public_health "https://${domain}:${https_port}/" || fail "The public HTTPS health check failed. Verify firewall/DNS and run: fluxus setup accounts repair"
+    public_health "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
     say "Account service is ready: https://${domain}:${https_port}/"
     say "Client users only enter ${public_ip}:${RELAY_PORT} and their invite code."
 }
