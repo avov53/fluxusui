@@ -277,8 +277,8 @@ move_account_endpoint_to_free_port() {
     update_public_account_url "https://${domain}:${new_port}/"
     systemctl restart fluxchat
 
-    if wait_for_public_health "https://${domain}:${new_port}/"; then
-        say "Public HTTPS health recovered on port ${new_port}."
+    if wait_for_public_ready "https://${domain}:${new_port}/"; then
+        say "Public HTTPS Account API recovered on port ${new_port}."
         say "The relay now advertises https://${domain}:${new_port}/ to clients."
         return 0
     fi
@@ -350,16 +350,39 @@ public_health() {
     curl -fsS --max-time 10 "${url%/}/health" | grep -q '"'
 }
 
+local_routes() {
+    local code
+    code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/api/v1/accounts/register" 2>/dev/null || printf '000')"
+    [ "$code" = "405" ]
+}
+
+public_routes() {
+    local url="$1"
+    local code
+    code="$(curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000')"
+    [ "$code" = "405" ]
+}
+
 public_health_code() {
     local url="$1"
     curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/health" 2>/dev/null || printf '000'
 }
 
-wait_for_public_health() {
+public_route_code() {
+    local url="$1"
+    curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000'
+}
+
+public_ready() {
+    local url="$1"
+    public_health "$url" && public_routes "$url"
+}
+
+wait_for_public_ready() {
     local url="$1"
     local attempt
     for attempt in $(seq 1 8); do
-        if public_health "$url"; then
+        if public_ready "$url"; then
             return 0
         fi
         sleep 1
@@ -373,36 +396,36 @@ repair_public_https() {
     local public_url="https://${domain}:${https_port}/"
     local code
     code="$(public_health_code "$public_url")"
-    warn "Public HTTPS health failed with HTTP ${code}. Running automatic diagnostics and repair."
+    warn "Public HTTPS endpoint failed. Health HTTP ${code}, register route HTTP $(public_route_code "$public_url"). Running automatic diagnostics and repair."
 
-    if ! local_health; then
+    if ! local_health || ! local_routes; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
         fail "Local Account API is not healthy, so nginx cannot proxy it."
     fi
 
     say "Local Account API is healthy. Rewriting nginx account endpoint."
     write_https_site "$domain" "$https_port" || true
-    if public_health "$public_url"; then
-        say "Public HTTPS health recovered after rewriting the normal nginx site."
+    if public_ready "$public_url"; then
+        say "Public HTTPS Account API recovered after rewriting the normal nginx site."
         return
     fi
 
     code="$(public_health_code "$public_url")"
-    warn "Normal nginx site still returns HTTP ${code}. Applying forced conf.d endpoint."
+    warn "Normal nginx site still fails. Health HTTP ${code}, register route HTTP $(public_route_code "$public_url"). Applying forced conf.d endpoint."
     write_forced_https_site "$domain" "$https_port"
-    if public_health "$public_url"; then
-        say "Public HTTPS health recovered with forced nginx endpoint."
+    if public_ready "$public_url"; then
+        say "Public HTTPS Account API recovered with forced nginx endpoint."
         return
     fi
 
     code="$(public_health_code "$public_url")"
-    if [ "$code" = "404" ] && move_account_endpoint_to_free_port "$domain" "$https_port"; then
+    if { [ "$code" = "404" ] || [ "$(public_route_code "$public_url")" = "404" ]; } && move_account_endpoint_to_free_port "$domain" "$https_port"; then
         return
     fi
 
     warn "Nginx listeners on ${https_port}:"
     nginx -T 2>/dev/null | grep -n "listen ${https_port}\|listen \[::\]:${https_port}\|server_name\|proxy_pass" >&2 || true
-    fail "The public HTTPS health check still fails with HTTP ${code}. Check external firewall/provider port rules for ${https_port}/tcp."
+    fail "The public HTTPS Account API check still fails. Health HTTP ${code}, register route HTTP $(public_route_code "$public_url")."
 }
 
 status() {
@@ -418,15 +441,18 @@ status() {
     printf '%-22s %s\n' "Relay service" "$(systemctl is-active fluxchat 2>/dev/null || echo inactive)"
     printf '%-22s %s\n' "Nginx" "$(systemctl is-active nginx 2>/dev/null || echo inactive)"
     printf '%-22s %s\n' "Account API local" "$(local_health && echo READY || echo FAILED)"
+    printf '%-22s %s\n' "Account routes local" "$(local_routes && echo READY || echo FAILED)"
     printf '%-22s %s\n' "Public URL" "${public_url:-not configured}"
     printf '%-22s %s\n' "HTTPS health" "$( [ -n "$public_url" ] && public_health "$public_url" && echo READY || echo FAILED )"
+    printf '%-22s %s\n' "HTTPS routes" "$( [ -n "$public_url" ] && public_routes "$public_url" && echo READY || echo FAILED )"
 
     [ -f "$ACCOUNT_ENV" ] || state=1
     systemctl is-active --quiet postgresql || state=1
     systemctl is-active --quiet fluxchat || state=1
     systemctl is-active --quiet nginx || state=1
     local_health || state=1
-    [ -n "$public_url" ] && public_health "$public_url" || state=1
+    local_routes || state=1
+    [ -n "$public_url" ] && public_ready "$public_url" || state=1
     return "$state"
 }
 
@@ -507,11 +533,11 @@ setup_accounts() {
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
 
     sleep 1
-    if ! local_health; then
+    if ! local_health || ! local_routes; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
         fail "The local Account API did not become healthy. The service log above shows the exact reason."
     fi
-    public_health "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
+    public_ready "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
     local ready_url
     ready_url="$(env_value FLUXCHAT_PUBLIC_ACCOUNT_URL)"
     say "Account service is ready: ${ready_url:-https://${domain}:${https_port}/}"
