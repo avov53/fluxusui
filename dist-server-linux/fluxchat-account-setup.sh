@@ -150,9 +150,18 @@ obtain_certificate() {
     fi
 }
 
+cleanup_legacy_nginx_sites() {
+    # Older FluxChat badge/account experiments can keep matching server blocks
+    # on the same sslip.io domain and make /health work while /api/v1/* returns
+    # 404 from a different nginx site.
+    rm -f /etc/nginx/sites-enabled/fluxchat-badge-authority
+    rm -f /etc/nginx/conf.d/fluxchat-badge-authority.conf
+}
+
 write_https_site() {
     local domain="$1"
     local https_port="$2"
+    cleanup_legacy_nginx_sites
     rm -f "$NGINX_FORCE_CONF"
     cat > "$NGINX_AVAILABLE" <<EOF
 server {
@@ -214,6 +223,7 @@ EOF
 write_forced_https_site() {
     local domain="$1"
     local https_port="$2"
+    cleanup_legacy_nginx_sites
     rm -f "$NGINX_ENABLED"
     mkdir -p "$(dirname "$NGINX_FORCE_CONF")"
     cat > "$NGINX_FORCE_CONF" <<EOF
@@ -482,7 +492,7 @@ status() {
     printf '%-22s %s\n' "Account routes local" "$(local_routes && echo READY || echo FAILED)"
     printf '%-22s %s\n' "Public URL" "${public_url:-not configured}"
     printf '%-22s %s\n' "HTTPS health" "$( [ -n "$public_url" ] && public_health "$public_url" && echo READY || echo FAILED )"
-    printf '%-22s %s\n' "HTTPS routes" "$( [ -n "$public_url" ] && public_routes "$public_url" && echo READY || echo FAILED )"
+    printf '%-22s %s\n' "HTTPS routes" "$( [ -n "$public_url" ] && public_routes "$public_url" && echo READY || printf 'FAILED (%s)' "$(public_route_code "$public_url")" )"
 
     [ -f "$ACCOUNT_ENV" ] || state=1
     systemctl is-active --quiet postgresql || state=1
