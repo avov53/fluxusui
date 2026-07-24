@@ -196,6 +196,15 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
     }
 
+    location = /api/v1/accounts/health {
+        proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
     location = /api/v1/accounts/register {
         proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/register;
         proxy_http_version 1.1;
@@ -266,6 +275,15 @@ server {
         proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP \$remote_addr;
+    }
+
+    location = /api/v1/accounts/health {
+        proxy_pass http://127.0.0.1:${API_PORT}/api/v1/accounts/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 
     location = /api/v1/accounts/register {
@@ -397,10 +415,7 @@ public_health() {
 }
 
 local_routes() {
-    local code
-    code="$(curl --http1.1 -sS --max-time 5 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/api/v1/accounts/register" 2>/dev/null || true)"
-    [ -n "$code" ] || code="000"
-    [ "$code" = "400" ] || [ "$code" = "401" ]
+    curl --http1.1 -fsS --max-time 5 "http://127.0.0.1:${API_PORT}/api/v1/accounts/health" | grep -q '"status"'
 }
 
 local_ready() {
@@ -420,10 +435,7 @@ wait_for_local_ready() {
 
 public_routes() {
     local url="$1"
-    local code
-    code="$(curl --http1.1 -ksS --max-time 10 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || true)"
-    [ -n "$code" ] || code="000"
-    [ "$code" = "400" ] || [ "$code" = "401" ]
+    curl --http1.1 -kfsS --max-time 10 "${url%/}/api/v1/accounts/health" | grep -q '"status"'
 }
 
 public_health_code() {
@@ -434,7 +446,7 @@ public_health_code() {
 public_route_code() {
     local url="$1"
     local code
-    code="$(curl --http1.1 -ksS --max-time 10 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || true)"
+    code="$(curl --http1.1 -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/health" 2>/dev/null || true)"
     [ -n "$code" ] || code="000"
     printf '%s' "$code"
 }
