@@ -168,8 +168,8 @@ server {
 }
 
 server {
-    listen ${https_port} ssl http2;
-    listen [::]:${https_port} ssl http2;
+    listen ${https_port} ssl http2 default_server;
+    listen [::]:${https_port} ssl http2 default_server;
     server_name ${domain};
 
     ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
