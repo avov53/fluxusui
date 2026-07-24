@@ -352,8 +352,8 @@ public_health() {
 
 local_routes() {
     local code
-    code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/api/v1/accounts/register" 2>/dev/null || printf '000')"
-    [ "$code" = "405" ]
+    code="$(curl -sS --max-time 5 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/api/v1/accounts/register" 2>/dev/null || printf '000')"
+    [ "$code" = "400" ] || [ "$code" = "401" ]
 }
 
 local_ready() {
@@ -374,8 +374,8 @@ wait_for_local_ready() {
 public_routes() {
     local url="$1"
     local code
-    code="$(curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000')"
-    [ "$code" = "405" ]
+    code="$(curl -ksS --max-time 10 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000')"
+    [ "$code" = "400" ] || [ "$code" = "401" ]
 }
 
 public_health_code() {
@@ -385,7 +385,7 @@ public_health_code() {
 
 public_route_code() {
     local url="$1"
-    curl -ksS --max-time 10 -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000'
+    curl -ksS --max-time 10 -X POST -H 'Content-Type: application/json' --data-binary '' -o /dev/null -w '%{http_code}' "${url%/}/api/v1/accounts/register" 2>/dev/null || printf '000'
 }
 
 public_ready() {
