@@ -470,6 +470,27 @@ configure_firewall() {
     fi
 }
 
+reserve_relay_port() {
+    local existing
+    local next
+
+    # Prevent proxy cores such as xray from randomly taking FluxChat's relay
+    # port as an outbound ephemeral TCP port before the relay service starts.
+    existing="$(sysctl -n net.ipv4.ip_local_reserved_ports 2>/dev/null || true)"
+    case ",${existing}," in
+        *",${RELAY_PORT},"*) return 0 ;;
+    esac
+
+    next="${RELAY_PORT}"
+    if [ -n "$existing" ]; then
+        next="${existing},${RELAY_PORT}"
+    fi
+
+    mkdir -p /etc/sysctl.d
+    printf 'net.ipv4.ip_local_reserved_ports=%s\n' "$next" > /etc/sysctl.d/99-fluxchat-relay-port.conf
+    sysctl -w "net.ipv4.ip_local_reserved_ports=${next}" >/dev/null 2>&1 || true
+}
+
 local_health() {
     curl -fsS --max-time 5 "http://127.0.0.1:${API_PORT}/health" | grep -q '"'
 }
@@ -678,6 +699,7 @@ setup_accounts() {
     write_account_env "$db_password" "$data_key" "$federation_key" \
         "https://${domain}:${https_port}/"
     write_systemd_dropin
+    reserve_relay_port
     restart_fluxchat_clean
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
 
