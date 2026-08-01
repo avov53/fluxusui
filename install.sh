@@ -48,10 +48,15 @@ port_in_use() {
 
 port_listener_pids() {
   local port="$1"
-  ss -ltnup 2>/dev/null \
-    | awk -v needle=":${port}" '$0 ~ needle { print }' \
-    | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
-    | sort -u
+  {
+    ss -ltnup 2>/dev/null \
+      | awk -v needle=":${port}" '$0 ~ needle { print }' \
+      | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p'
+    if command -v fuser >/dev/null 2>&1; then
+      fuser -n tcp "$port" 2>/dev/null || true
+      fuser -n udp "$port" 2>/dev/null || true
+    fi
+  } | tr ' ' '\n' | sed '/^$/d' | sort -u
 }
 
 wait_for_fluxchat_ports() {
