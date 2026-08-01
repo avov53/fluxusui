@@ -483,8 +483,12 @@ local_routes() {
     curl --http1.1 -fsS --max-time 5 "http://127.0.0.1:${API_PORT}/api/v1/accounts/health" | grep -q '"status"'
 }
 
+local_relay() {
+    ss -ltnH "sport = :${RELAY_PORT}" 2>/dev/null | grep -q .
+}
+
 local_ready() {
-    local_health && local_routes
+    local_relay && local_health && local_routes
 }
 
 wait_for_local_ready() {
@@ -543,7 +547,7 @@ repair_public_https() {
 
     if ! local_ready; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
-        fail "Local Account API is not healthy, so nginx cannot proxy it."
+        fail "Local FluxChat relay/account API is not healthy, so nginx cannot proxy it."
     fi
 
     say "Local Account API is healthy. Rewriting nginx account endpoint."
@@ -583,6 +587,7 @@ status() {
     printf '%-22s %s\n' "PostgreSQL" "$(systemctl is-active postgresql 2>/dev/null || echo inactive)"
     printf '%-22s %s\n' "Relay service" "$(systemctl is-active fluxchat 2>/dev/null || echo inactive)"
     printf '%-22s %s\n' "Nginx" "$(systemctl is-active nginx 2>/dev/null || echo inactive)"
+    printf '%-22s %s\n' "Relay TCP local" "$(local_relay && echo READY || echo FAILED)"
     printf '%-22s %s\n' "Account API local" "$(local_health && echo READY || echo FAILED)"
     printf '%-22s %s\n' "Account routes local" "$(local_routes && echo READY || echo FAILED)"
     printf '%-22s %s\n' "Public URL" "${public_url:-not configured}"
@@ -593,6 +598,7 @@ status() {
     systemctl is-active --quiet postgresql || state=1
     systemctl is-active --quiet fluxchat || state=1
     systemctl is-active --quiet nginx || state=1
+    local_relay || state=1
     local_health || state=1
     local_routes || state=1
     [ -n "$public_url" ] && public_ready "$public_url" || state=1
@@ -677,7 +683,7 @@ setup_accounts() {
 
     if ! wait_for_local_ready; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
-        fail "The local Account API did not become ready within 120 seconds. The service log above shows the exact reason."
+        fail "The local FluxChat relay/account API did not become fully ready within 120 seconds. Check relay TCP ${RELAY_PORT} and Account API ${API_PORT} in the service log above."
     fi
     public_ready "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
     local ready_url
