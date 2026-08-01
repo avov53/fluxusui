@@ -73,7 +73,7 @@ wait_for_fluxchat_ports() {
 
 kill_stale_fluxchat_servers() {
   local pids
-  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
+  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; pgrep -f '(^|/| )FluxChat\.Server( |$)' 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
   if [ -z "$pids" ]; then
     return 0
   fi
@@ -81,7 +81,7 @@ kill_stale_fluxchat_servers() {
   echo "Stopping stale FluxChat port owner process(es): ${pids}"
   kill $pids 2>/dev/null || true
   sleep 2
-  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
+  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; pgrep -f '(^|/| )FluxChat\.Server( |$)' 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
   if [ -n "$pids" ]; then
     echo "Force stopping stale FluxChat port owner process(es): ${pids}"
     kill -9 $pids 2>/dev/null || true
@@ -91,15 +91,22 @@ kill_stale_fluxchat_servers() {
 prepare_fluxchat_restart() {
   if systemctl list-unit-files fluxchat.service >/dev/null 2>&1; then
     systemctl stop fluxchat >/dev/null 2>&1 || true
+    systemctl reset-failed fluxchat >/dev/null 2>&1 || true
   fi
 
   if ! wait_for_fluxchat_ports 10; then
+    systemctl kill --kill-who=all --signal=TERM fluxchat >/dev/null 2>&1 || true
+    sleep 2
+  fi
+
+  if ! wait_for_fluxchat_ports 10; then
+    systemctl kill --kill-who=all --signal=KILL fluxchat >/dev/null 2>&1 || true
     kill_stale_fluxchat_servers
   fi
 
   if ! wait_for_fluxchat_ports 10; then
     echo "ERROR: FluxChat ports are still busy after stopping stale processes."
-    ss -ltnp 2>/dev/null | grep -E ":(${PORT}|42801) " || true
+    ss -ltnup 2>/dev/null | grep -E ":(${PORT}|42801) " || true
     exit 1
   fi
 }
@@ -110,6 +117,11 @@ echo
 
 need_cmd curl
 need_cmd openssl
+if ! command -v fuser >/dev/null 2>&1; then
+  echo "Installing dependency: psmisc"
+  apt-get update
+  apt-get install -y psmisc
+fi
 if ! command -v ss >/dev/null 2>&1; then
   echo "Installing dependency: iproute2"
   apt-get update

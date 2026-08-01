@@ -38,7 +38,72 @@ install_packages() {
     export DEBIAN_FRONTEND=noninteractive
     say "Installing required packages if needed..."
     apt-get update
-    apt-get install -y nginx certbot postgresql postgresql-contrib python3 curl openssl ca-certificates
+    apt-get install -y nginx certbot postgresql postgresql-contrib python3 curl openssl ca-certificates iproute2 psmisc
+}
+
+port_in_use() {
+    local port="$1"
+    ss -ltnup 2>/dev/null | grep -q ":${port} "
+}
+
+port_listener_pids() {
+    local port="$1"
+    {
+        ss -ltnup 2>/dev/null \
+            | awk -v needle=":${port}" '$0 ~ needle { print }' \
+            | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p'
+        if command -v fuser >/dev/null 2>&1; then
+            fuser -n tcp "$port" 2>/dev/null || true
+            fuser -n udp "$port" 2>/dev/null || true
+        fi
+    } | tr ' ' '\n' | sed '/^$/d' | sort -u
+}
+
+wait_for_fluxchat_ports() {
+    local seconds="${1:-10}"
+    local i
+    for i in $(seq 1 "$seconds"); do
+        if ! port_in_use "$RELAY_PORT" && ! port_in_use "$API_PORT"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+kill_stale_fluxchat_servers() {
+    local pids
+    pids="$( { pgrep -f '(^|/| )FluxChat\.Server( |$)' 2>/dev/null; port_listener_pids "$RELAY_PORT"; port_listener_pids "$API_PORT"; } | sort -u || true )"
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+
+    say "Stopping stale FluxChat process(es): ${pids}"
+    kill $pids 2>/dev/null || true
+    sleep 2
+    pids="$( { pgrep -f '(^|/| )FluxChat\.Server( |$)' 2>/dev/null; port_listener_pids "$RELAY_PORT"; port_listener_pids "$API_PORT"; } | sort -u || true )"
+    if [ -n "$pids" ]; then
+        warn "Force stopping stale FluxChat process(es): ${pids}"
+        kill -9 $pids 2>/dev/null || true
+    fi
+}
+
+restart_fluxchat_clean() {
+    systemctl stop fluxchat >/dev/null 2>&1 || true
+    systemctl reset-failed fluxchat >/dev/null 2>&1 || true
+    if ! wait_for_fluxchat_ports 8; then
+        systemctl kill --kill-who=all --signal=TERM fluxchat >/dev/null 2>&1 || true
+        sleep 2
+    fi
+    if ! wait_for_fluxchat_ports 8; then
+        systemctl kill --kill-who=all --signal=KILL fluxchat >/dev/null 2>&1 || true
+        kill_stale_fluxchat_servers
+    fi
+    if ! wait_for_fluxchat_ports 10; then
+        warn "FluxChat ports are still busy before restart:"
+        ss -ltnup 2>/dev/null | grep -E ":(${RELAY_PORT}|${API_PORT}) " >&2 || true
+    fi
+    systemctl start fluxchat
 }
 
 env_value() {
@@ -339,7 +404,7 @@ move_account_endpoint_to_free_port() {
     write_https_site "$domain" "$new_port"
     configure_firewall "$new_port"
     update_public_account_url "https://${domain}:${new_port}/"
-    systemctl restart fluxchat
+    restart_fluxchat_clean
 
     if wait_for_public_ready "https://${domain}:${new_port}/"; then
         say "Public HTTPS Account API recovered on port ${new_port}."
@@ -424,7 +489,7 @@ local_ready() {
 
 wait_for_local_ready() {
     local attempt
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 120); do
         if local_ready; then
             return 0
         fi
@@ -542,7 +607,7 @@ disable_accounts() {
     mv "$ACCOUNT_ENV" "$DISABLED_ACCOUNT_ENV"
     rm -f "$NGINX_ENABLED"
     nginx -t && systemctl reload nginx
-    systemctl restart fluxchat
+    restart_fluxchat_clean
     say "Account API is disabled. PostgreSQL data and ${DISABLED_ACCOUNT_ENV} were kept."
 }
 
@@ -607,12 +672,12 @@ setup_accounts() {
     write_account_env "$db_password" "$data_key" "$federation_key" \
         "https://${domain}:${https_port}/"
     write_systemd_dropin
-    systemctl restart fluxchat
+    restart_fluxchat_clean
     printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
 
     if ! wait_for_local_ready; then
         journalctl -u fluxchat -n 80 --no-pager >&2 || true
-        fail "The local Account API did not become ready within 30 seconds. The service log above shows the exact reason."
+        fail "The local Account API did not become ready within 120 seconds. The service log above shows the exact reason."
     fi
     public_ready "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
     local ready_url
