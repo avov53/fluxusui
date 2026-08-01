@@ -41,12 +41,67 @@ download() {
   mv "$tmp" "$target"
 }
 
+port_in_use() {
+  local port="$1"
+  ss -ltnp 2>/dev/null | grep -q ":${port} "
+}
+
+wait_for_fluxchat_ports() {
+  local seconds="${1:-10}"
+  local i
+  for i in $(seq 1 "$seconds"); do
+    if ! port_in_use "$PORT" && ! port_in_use "42801"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+kill_stale_fluxchat_servers() {
+  local pids
+  pids="$(pgrep -f "${SERVER_BIN}" 2>/dev/null || true)"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+
+  echo "Stopping stale FluxChat.Server process(es): ${pids}"
+  kill $pids 2>/dev/null || true
+  sleep 2
+  pids="$(pgrep -f "${SERVER_BIN}" 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "Force stopping stale FluxChat.Server process(es): ${pids}"
+    kill -9 $pids 2>/dev/null || true
+  fi
+}
+
+prepare_fluxchat_restart() {
+  if systemctl list-unit-files fluxchat.service >/dev/null 2>&1; then
+    systemctl stop fluxchat >/dev/null 2>&1 || true
+  fi
+
+  if ! wait_for_fluxchat_ports 10; then
+    kill_stale_fluxchat_servers
+  fi
+
+  if ! wait_for_fluxchat_ports 10; then
+    echo "ERROR: FluxChat ports are still busy after stopping stale processes."
+    ss -ltnp 2>/dev/null | grep -E ":(${PORT}|42801) " || true
+    exit 1
+  fi
+}
+
 echo "FluxChat Relay installer"
 echo "Repository: https://github.com/${REPO}"
 echo
 
 need_cmd curl
 need_cmd openssl
+if ! command -v ss >/dev/null 2>&1; then
+  echo "Installing dependency: iproute2"
+  apt-get update
+  apt-get install -y iproute2
+fi
 
 if ! dpkg -s coturn >/dev/null 2>&1; then
   echo "Installing dependency: coturn"
@@ -55,6 +110,8 @@ if ! dpkg -s coturn >/dev/null 2>&1; then
 fi
 
 mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$ETC_DIR"
+
+prepare_fluxchat_restart
 
 if [ ! -s "$TURN_SECRET_FILE" ]; then
   openssl rand -base64 32 > "$TURN_SECRET_FILE"
@@ -134,8 +191,9 @@ fi
 systemctl daemon-reload
 systemctl enable --now coturn
 systemctl restart coturn
-systemctl enable --now fluxchat
-systemctl restart fluxchat
+systemctl enable fluxchat
+prepare_fluxchat_restart
+systemctl start fluxchat
 
 echo
 echo "FluxChat Relay installed or updated."
