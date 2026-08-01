@@ -43,7 +43,15 @@ download() {
 
 port_in_use() {
   local port="$1"
-  ss -ltnp 2>/dev/null | grep -q ":${port} "
+  ss -ltnup 2>/dev/null | grep -q ":${port} "
+}
+
+port_listener_pids() {
+  local port="$1"
+  ss -ltnup 2>/dev/null \
+    | awk -v needle=":${port}" '$0 ~ needle { print }' \
+    | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+    | sort -u
 }
 
 wait_for_fluxchat_ports() {
@@ -60,17 +68,17 @@ wait_for_fluxchat_ports() {
 
 kill_stale_fluxchat_servers() {
   local pids
-  pids="$(pgrep -f "${SERVER_BIN}" 2>/dev/null || true)"
+  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
   if [ -z "$pids" ]; then
     return 0
   fi
 
-  echo "Stopping stale FluxChat.Server process(es): ${pids}"
+  echo "Stopping stale FluxChat port owner process(es): ${pids}"
   kill $pids 2>/dev/null || true
   sleep 2
-  pids="$(pgrep -f "${SERVER_BIN}" 2>/dev/null || true)"
+  pids="$( { pgrep -f "${SERVER_BIN}" 2>/dev/null; port_listener_pids "$PORT"; port_listener_pids "42801"; } | sort -u || true )"
   if [ -n "$pids" ]; then
-    echo "Force stopping stale FluxChat.Server process(es): ${pids}"
+    echo "Force stopping stale FluxChat port owner process(es): ${pids}"
     kill -9 $pids 2>/dev/null || true
   fi
 }
