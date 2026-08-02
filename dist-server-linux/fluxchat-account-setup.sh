@@ -26,6 +26,40 @@ say() { printf '\n[FluxChat Accounts] %s\n' "$*"; }
 warn() { printf '\n[FluxChat Accounts] WARNING: %s\n' "$*" >&2; }
 fail() { printf '\n[FluxChat Accounts] ERROR: %s\n' "$*" >&2; exit 1; }
 
+disable_known_broken_apt_sources() {
+    local files
+    files="$(find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 2>/dev/null \
+        | xargs -0 grep -ilE 'packagecloud\.io/ookla|speedtest-cli' 2>/dev/null || true)"
+    if [ -z "$files" ]; then
+        return 1
+    fi
+
+    warn "Disabling broken Ookla Speedtest apt source(s):"
+    printf '%s\n' "$files" >&2
+    while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        mv "$file" "${file}.disabled-by-fluxchat"
+    done <<EOF
+$files
+EOF
+    return 0
+}
+
+apt_update() {
+    if apt-get update; then
+        return 0
+    fi
+
+    warn "apt-get update failed. Checking for known broken third-party apt sources."
+    if disable_known_broken_apt_sources; then
+        say "Retrying apt-get update after disabling broken source(s)."
+        apt-get update
+        return
+    fi
+
+    fail "apt-get update failed and no known broken source was found."
+}
+
 require_root() {
     [ "$(id -u)" -eq 0 ] || fail "Run this command as root."
 }
@@ -37,7 +71,7 @@ require_debian() {
 install_packages() {
     export DEBIAN_FRONTEND=noninteractive
     say "Installing required packages if needed..."
-    apt-get update
+    apt_update
     apt-get install -y nginx certbot postgresql postgresql-contrib python3 curl openssl ca-certificates iproute2 psmisc
 }
 

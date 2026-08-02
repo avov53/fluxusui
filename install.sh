@@ -27,9 +27,44 @@ fi
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Installing dependency: $1"
-    apt-get update
+    apt_update
     apt-get install -y "$1"
   fi
+}
+
+disable_known_broken_apt_sources() {
+  local files
+  files="$(find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 2>/dev/null \
+    | xargs -0 grep -ilE 'packagecloud\.io/ookla|speedtest-cli' 2>/dev/null || true)"
+  if [ -z "$files" ]; then
+    return 1
+  fi
+
+  echo "Disabling broken Ookla Speedtest apt source(s):"
+  printf '%s\n' "$files"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    mv "$file" "${file}.disabled-by-fluxchat"
+  done <<EOF
+$files
+EOF
+  return 0
+}
+
+apt_update() {
+  if apt-get update; then
+    return 0
+  fi
+
+  echo "apt-get update failed. Checking for known broken third-party apt sources..."
+  if disable_known_broken_apt_sources; then
+    echo "Retrying apt-get update after disabling broken source(s)."
+    apt-get update
+    return
+  fi
+
+  echo "apt-get update failed and no known broken source was found."
+  return 1
 }
 
 download() {
@@ -119,18 +154,18 @@ need_cmd curl
 need_cmd openssl
 if ! command -v fuser >/dev/null 2>&1; then
   echo "Installing dependency: psmisc"
-  apt-get update
+  apt_update
   apt-get install -y psmisc
 fi
 if ! command -v ss >/dev/null 2>&1; then
   echo "Installing dependency: iproute2"
-  apt-get update
+  apt_update
   apt-get install -y iproute2
 fi
 
 if ! dpkg -s coturn >/dev/null 2>&1; then
   echo "Installing dependency: coturn"
-  apt-get update
+  apt_update
   apt-get install -y coturn
 fi
 
