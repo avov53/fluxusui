@@ -268,7 +268,15 @@ echo "Create an invite code:"
 echo "  fluxus"
 
 echo
-if "$ACCOUNT_SETUP_SCRIPT" status >/dev/null 2>&1; then
+if [ "${FLUXCHAT_UPDATE_CURRENT_ACCOUNT:-0}" = "1" ]; then
+  if [ -f "${ETC_DIR}/account.env" ]; then
+    echo "Updating Account API with the current saved domain and HTTPS settings..."
+    "$ACCOUNT_SETUP_SCRIPT" repair-current
+  else
+    echo "Account service is not configured yet. Use the interactive update/setup option first."
+    exit 1
+  fi
+elif "$ACCOUNT_SETUP_SCRIPT" status >/dev/null 2>&1; then
   echo "Account service: already configured and healthy."
 elif [ -t 0 ]; then
   echo "Account service is not configured yet."

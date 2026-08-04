@@ -630,6 +630,56 @@ repair_public_https() {
     fail "The public HTTPS Account API check still fails. Health HTTP ${code}, register route HTTP $(public_route_code "$public_url")."
 }
 
+setup_accounts_current() {
+    require_root
+    require_debian
+    install_packages
+
+    [ -f "$ACCOUNT_ENV" ] || fail "Current account configuration was not found. Use the interactive setup option first."
+
+    local public_ip existing_url domain https_port db_password data_key federation_key postgres_connection
+    public_ip="$(detect_public_ip)"
+    existing_url="$(env_value FLUXCHAT_PUBLIC_ACCOUNT_URL)"
+    domain="$(printf '%s' "$existing_url" | sed -E 's#https?://([^:/]+).*#\1#')"
+    https_port="$(printf '%s' "$existing_url" | sed -nE 's#https?://[^:]+:([0-9]+).*#\1#p')"
+
+    [ -n "$domain" ] || fail "The current public domain was not found in ${ACCOUNT_ENV}. Use the interactive setup option."
+    [ -n "$https_port" ] || https_port="$(choose_https_port "")"
+    [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] || \
+        fail "A Let's Encrypt certificate for ${domain} was not found. Use the interactive setup option."
+
+    postgres_connection="$(env_value FLUXCHAT_POSTGRES_CONNECTION)"
+    db_password="${postgres_connection##*Password=}"
+    [ "$db_password" = "$postgres_connection" ] && db_password=""
+    db_password="${db_password%%;*}"
+    data_key="$(env_value FLUXCHAT_DATA_KEY)"
+    federation_key="$(env_value FLUXCHAT_FEDERATION_KEY)"
+    [ -n "$db_password" ] || fail "PostgreSQL password is missing in ${ACCOUNT_ENV}. Use the interactive setup option."
+    [ -n "$data_key" ] || fail "Data encryption key is missing in ${ACCOUNT_ENV}. Use the interactive setup option."
+    [ -n "$federation_key" ] || federation_key="$(openssl rand -base64 48)"
+
+    say "Updating Account API with the current domain: ${domain}:${https_port}"
+    ensure_postgres "$db_password"
+    write_http_challenge_site "$domain"
+    obtain_certificate "$domain" "root@${domain}"
+    write_https_site "$domain" "$https_port"
+    configure_firewall "$https_port"
+    write_account_env "$db_password" "$data_key" "$federation_key" \
+        "https://${domain}:${https_port}/"
+    write_systemd_dropin
+    reserve_relay_port
+    restart_fluxchat_clean
+    printf '%s\n' "$SCRIPT_VERSION" > "$SETUP_MARKER"
+
+    if ! wait_for_local_ready; then
+        journalctl -u fluxchat -n 80 --no-pager >&2 || true
+        fail "The local FluxChat relay/account API did not become fully ready within 120 seconds. Check relay TCP ${RELAY_PORT} and Account API ${API_PORT} in the service log above."
+    fi
+    public_ready "https://${domain}:${https_port}/" || repair_public_https "$domain" "$https_port"
+    say "Account service is ready: $(env_value FLUXCHAT_PUBLIC_ACCOUNT_URL)"
+    say "Client users only enter ${public_ip}:${RELAY_PORT} and their invite code."
+}
+
 status() {
     local env_file="$ACCOUNT_ENV"
     [ -f "$env_file" ] || env_file="$DISABLED_ACCOUNT_ENV"
@@ -752,6 +802,7 @@ require_root
 case "$mode" in
     status|--status) status ;;
     disable) disable_accounts ;;
+    current|repair-current|--current) setup_accounts_current ;;
     setup|repair|--repair) setup_accounts ;;
-    *) fail "Usage: fluxchat-account-setup.sh [setup|status|repair|disable]" ;;
+    *) fail "Usage: fluxchat-account-setup.sh [setup|status|repair|disable|repair-current]" ;;
 esac
