@@ -191,6 +191,9 @@ fi
 echo "Downloading server..."
 download "${BASE_URL}/dist-server-linux/FluxChat.Server" "$SERVER_BIN"
 
+echo "Downloading SQLite native runtime..."
+download "${BASE_URL}/dist-server-linux/libe_sqlite3.so" "${INSTALL_DIR}/libe_sqlite3.so"
+
 echo "Downloading fluxus admin CLI..."
 download "${BASE_URL}/dist-server-linux/fluxus" "$FLUXUS_BIN"
 
